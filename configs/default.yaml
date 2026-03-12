@@ -1,5 +1,5 @@
 selected_norad_ids: []
-case_selection_limit: 5
+case_selection_limit: 20
 selected_object_types:
   - Payload
   - Rocket Body

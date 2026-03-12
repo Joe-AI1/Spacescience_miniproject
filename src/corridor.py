@@ -9,8 +9,9 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from pyproj import CRS
-from shapely.geometry import LineString, MultiLineString, Point
-from shapely.ops import transform
+from shapely.geometry import LineString, MultiLineString, Point, box
+from shapely.ops import transform, unary_union
+from shapely.validation import make_valid
 
 
 LOGGER = logging.getLogger(__name__)
@@ -78,18 +79,51 @@ def _normalize_geometry_longitudes(geometry):
     return transform(_wrap_xy, geometry)
 
 
-def build_corridor_from_points(points_df: pd.DataFrame, width_km: float) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+def wrap_geometry_antimeridian(geometry):
+    if geometry.is_empty:
+        return geometry
+    if not geometry.is_valid:
+        geometry = make_valid(geometry)
+
+    min_x, _, max_x, _ = geometry.bounds
+    start_zone = math.floor((min_x + 180.0) / 360.0)
+    end_zone = math.floor((max_x + 180.0) / 360.0)
+    pieces = []
+
+    for zone in range(start_zone, end_zone + 1):
+        min_lon = -180.0 + 360.0 * zone
+        max_lon = 180.0 + 360.0 * zone
+        clipped = geometry.intersection(box(min_lon, -90.0, max_lon, 90.0))
+        if clipped.is_empty:
+            continue
+        shifted = transform(lambda x, y, z=None, zone=zone: (x - 360.0 * zone, y), clipped)
+        pieces.append(shifted)
+
+    if not pieces:
+        return _normalize_geometry_longitudes(geometry)
+
+    wrapped = unary_union(pieces)
+    return _normalize_geometry_longitudes(wrapped)
+
+
+def build_corridor_from_points(
+    points_df: pd.DataFrame,
+    width_km: float,
+    wrap_longitudes: bool = True,
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     frame = points_df.copy()
     frame["lon_unwrapped"] = _unwrap_longitudes(frame["lon"].astype(float).tolist())
     line = LineString(list(zip(frame["lon_unwrapped"], frame["lat"].astype(float))))
-    path_points_gdf = gpd.GeoDataFrame(frame, geometry=gpd.points_from_xy(frame["lon"], frame["lat"]), crs="EPSG:4326")
+    display_lon = frame["lon"] if wrap_longitudes else frame["lon_unwrapped"]
+    path_points_gdf = gpd.GeoDataFrame(frame, geometry=gpd.points_from_xy(display_lon, frame["lat"]), crs="EPSG:4326")
     line_gdf = gpd.GeoSeries([line], crs="EPSG:4326")
 
     local_crs = _build_local_aeqd_crs(frame["lat"], frame["lon_unwrapped"].tolist())
     projected = line_gdf.to_crs(local_crs)
     corridor_geom = projected.buffer(width_km * 1000.0, cap_style=2).iloc[0]
     corridor = gpd.GeoDataFrame({"corridor_width_km": [width_km]}, geometry=[corridor_geom], crs=local_crs).to_crs("EPSG:4326")
-    corridor["geometry"] = corridor.geometry.apply(_normalize_geometry_longitudes)
+    if wrap_longitudes:
+        corridor["geometry"] = corridor.geometry.apply(_normalize_geometry_longitudes)
     return corridor, path_points_gdf
 
 
@@ -163,7 +197,12 @@ def build_path_from_tle_history(
     tle_row = latest.iloc[0]
     sat = Satrec.twoline2rv(tle_row["tle_line1"], tle_row["tle_line2"])
 
-    start_time = max(pd.Timestamp(tle_row["epoch"]), pd.Timestamp(reentry_time_utc) - pd.Timedelta(hours=track_duration_hours))
+    effective_duration_hours = float(track_duration_hours)
+    if pd.notna(tle_row.get("mean_motion")) and float(tle_row["mean_motion"]) > 0:
+        orbit_period_hours = 24.0 / float(tle_row["mean_motion"])
+        effective_duration_hours = min(effective_duration_hours, orbit_period_hours * 1.25)
+
+    start_time = max(pd.Timestamp(tle_row["epoch"]), pd.Timestamp(reentry_time_utc) - pd.Timedelta(hours=effective_duration_hours))
     end_time = pd.Timestamp(reentry_time_utc)
     timestamps = pd.date_range(start=start_time, end=end_time, freq=f"{int(track_step_minutes)}min")
     rows: list[dict[str, object]] = []

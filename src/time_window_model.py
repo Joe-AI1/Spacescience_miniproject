@@ -8,7 +8,7 @@ import pandas as pd
 
 try:
     from sklearn.compose import ColumnTransformer
-    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
     from sklearn.impute import SimpleImputer
     from sklearn.linear_model import LinearRegression
     from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -17,6 +17,7 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:  # pragma: no cover
     ColumnTransformer = None
+    ExtraTreesRegressor = None
     RandomForestRegressor = None
     SimpleImputer = None
     LinearRegression = None
@@ -134,6 +135,13 @@ def _fit_and_score(train_df: pd.DataFrame, test_df: pd.DataFrame, config: AppCon
             random_state=config.random_state,
             n_jobs=1,
         ),
+        "extra_trees": ExtraTreesRegressor(
+            n_estimators=400,
+            max_depth=12,
+            min_samples_leaf=2,
+            random_state=config.random_state,
+            n_jobs=1,
+        ),
     }
 
     for model_name, model in candidate_models.items():
@@ -145,6 +153,22 @@ def _fit_and_score(train_df: pd.DataFrame, test_df: pd.DataFrame, config: AppCon
         metrics_rows.append({"model_name": model_name, "mae_hours": mae, "rmse_hours": rmse})
         models[model_name] = pipeline
     return models, pd.DataFrame(metrics_rows)
+
+
+def _extract_feature_importance(model_name: str, fitted_pipeline: object) -> pd.DataFrame:
+    model_step = fitted_pipeline.named_steps["model"]
+    if hasattr(model_step, "feature_importances_"):
+        importance_values = getattr(model_step, "feature_importances_")
+    elif hasattr(model_step, "coef_"):
+        importance_values = np.abs(np.ravel(getattr(model_step, "coef_")))
+    else:
+        return pd.DataFrame(columns=["feature", "importance", "model_name"])
+
+    return (
+        pd.DataFrame({"feature": FEATURE_COLUMNS, "importance": importance_values, "model_name": model_name})
+        .sort_values("importance", ascending=False)
+        .reset_index(drop=True)
+    )
 
 
 def run_time_window_model(
@@ -174,11 +198,7 @@ def run_time_window_model(
             test_predictions["split"] = "test"
             predictions_frames.append(test_predictions)
 
-            if selected_model_name == "random_forest":
-                importances = best_model.named_steps["model"].feature_importances_
-                feature_importance = pd.DataFrame({"feature": FEATURE_COLUMNS, "importance": importances}).sort_values(
-                    "importance", ascending=False
-                )
+            feature_importance = _extract_feature_importance(selected_model_name, best_model)
 
             latest_rows = dataset.sort_values("epoch").groupby("norad_id").tail(1).copy()
             latest_rows["predicted_hours_to_decay"] = best_model.predict(latest_rows[FEATURE_COLUMNS])

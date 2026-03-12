@@ -73,14 +73,10 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Optional packages:
+The default `requirements.txt` now includes both `sgp4` and `rasterio`.
 
-```bash
-pip install sgp4 rasterio
-```
-
-- `sgp4` enables an optional coarse path-from-TLE mode.
-- `rasterio` enables optional population raster zonal summaries when you already have a raster on disk.
+- `sgp4` enables the optional coarse path-from-TLE mode.
+- `rasterio` enables population raster zonal summaries when you already have a raster on disk.
 
 Copy `.env.example` to `.env` if you want credential-based features:
 
@@ -121,6 +117,12 @@ Run the full demo pipeline:
 python scripts/run_demo.py
 ```
 
+Run a batch of selected cases, for example 20 satellites:
+
+```bash
+python scripts/run_demo.py --all-cases --limit 20
+```
+
 Build only a corridor from a CSV or GeoJSON path:
 
 ```bash
@@ -131,10 +133,13 @@ python scripts/corridor_from_path.py --input data/sample_path.csv --width-km 200
 
 The main outputs are written under `outputs/`.
 
+When batch mode is used, each satellite also gets its own folder under `outputs/cases/<norad>_<object_slug>/`.
+
 Tables:
 
 - [outputs/tables/reentries_clean.csv](/c:/Users/koonj/SPACESCI/outputs/tables/reentries_clean.csv)
 - [outputs/tables/selected_cases.csv](/c:/Users/koonj/SPACESCI/outputs/tables/selected_cases.csv)
+- [outputs/tables/batch_exposure_summary.csv](/c:/Users/koonj/SPACESCI/outputs/tables/batch_exposure_summary.csv)
 - [outputs/tables/time_window_predictions.csv](/c:/Users/koonj/SPACESCI/outputs/tables/time_window_predictions.csv)
 - [outputs/tables/country_overlap.csv](/c:/Users/koonj/SPACESCI/outputs/tables/country_overlap.csv)
 - [outputs/tables/exposure_summary.csv](/c:/Users/koonj/SPACESCI/outputs/tables/exposure_summary.csv)
@@ -198,6 +203,6 @@ After the first successful public-data download and any optional credential-base
 
 This project intentionally avoids overstating precision.
 
-- The time-window model is a lightweight baseline using TLE trend features.
+- The time-window model is a lightweight baseline using TLE trend features with simple tabular regressors (linear regression, random forest, and extra trees).
 - The corridor is a buffered path, not a validated probabilistic debris corridor.
 - The exposure outputs are coarse indicators intended for presentation and discussion.

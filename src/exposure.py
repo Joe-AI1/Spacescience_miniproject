@@ -122,7 +122,11 @@ def _compute_raster_population(corridor_gdf: gpd.GeoDataFrame, raster_path: Path
         return float(valid[valid > 0].sum())
 
 
-def run_exposure_analysis(corridor_gdf: gpd.GeoDataFrame, config: AppConfig) -> tuple[pd.DataFrame, pd.DataFrame, gpd.GeoDataFrame | None, gpd.GeoDataFrame | None]:
+def run_exposure_analysis(
+    corridor_gdf: gpd.GeoDataFrame,
+    config: AppConfig,
+    output_tables_dir: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, gpd.GeoDataFrame | None, gpd.GeoDataFrame | None]:
     land, countries = _load_layers_if_available(config)
     country_overlap = pd.DataFrame(
         columns=[
@@ -155,7 +159,12 @@ def run_exposure_analysis(corridor_gdf: gpd.GeoDataFrame, config: AppConfig) -> 
         land_area_km2 = land_overlap.geometry.area.sum() / 1_000_000.0
         summary["land_area_km2"] = land_area_km2
         summary["land_fraction"] = land_area_km2 / corridor_area_km2 if corridor_area_km2 > 0 else pd.NA
-        summary["ocean_fraction"] = 1.0 - summary["land_fraction"] if pd.notna(summary["land_fraction"]) else pd.NA
+        if pd.notna(summary["land_fraction"]):
+            land_fraction = max(0.0, min(1.0, float(summary["land_fraction"])))
+            summary["land_fraction"] = land_fraction
+            summary["ocean_fraction"] = max(0.0, 1.0 - land_fraction)
+        else:
+            summary["ocean_fraction"] = pd.NA
     else:
         summary["status"] = "missing_land_reference_data"
 
@@ -234,6 +243,7 @@ def run_exposure_analysis(corridor_gdf: gpd.GeoDataFrame, config: AppConfig) -> 
             LOGGER.info("No local population raster found. Using country-level fallback exposure.")
 
     summary_df = pd.DataFrame([summary])
-    write_dataframe(country_overlap, config.outputs_tables_dir / "country_overlap.csv")
-    write_dataframe(summary_df, config.outputs_tables_dir / "exposure_summary.csv")
+    tables_dir = output_tables_dir or config.outputs_tables_dir
+    write_dataframe(country_overlap, tables_dir / "country_overlap.csv")
+    write_dataframe(summary_df, tables_dir / "exposure_summary.csv")
     return summary_df, country_overlap, land, countries

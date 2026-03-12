@@ -10,3 +10,5 @@ scikit-learn>=1.4
 PyYAML>=6.0
 python-dotenv>=1.0
 lxml>=5.1
+sgp4>=2.25
+rasterio>=1.3
